@@ -1,0 +1,102 @@
+/*
+ * Fork-Join example, adapted from
+ * http://www.oracle.com/technetwork/articles/java/fork-join-422606.html
+ * 
+ */
+package it.al333z.main;
+
+import it.al333z.indexer.Indexer;
+import it.al333z.models.Word;
+
+import java.io.*;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.LinkedBlockingQueue;
+
+import gov.nasa.jpf.jvm.Verify;
+
+/**
+ * Verifying indexers.
+ * @author ale
+ *
+ */
+
+public class TestSystemIndexer {    
+
+    public static void main(String[] args) {
+    	    	
+    	Verify.beginAtomic();
+    	
+    	// 2 indexers, to limit the number of scenarios
+    	Indexer[] indexers = new Indexer[2];
+    	
+    	// putting in the queue dummy content (real content is put by crawlers)
+    	LinkedBlockingQueue<Word> retrievedWordQueue = new LinkedBlockingQueue<Word>(10);
+    	Word w1 = new Word("chocolate", new File("foo"));
+    	Word w2 = new Word("chocolate", new File("foo"));
+    	Word w3 = new Word("bacon", new File("foo"));
+    	Word w4 = new Word("chocolate", new File("a"));
+    	Word w5 = new Word("muffin", new File("a"));
+    	
+    	try {
+			retrievedWordQueue.put(w1);
+	    	retrievedWordQueue.put(w2);
+	    	retrievedWordQueue.put(w3);
+	    	retrievedWordQueue.put(w4);
+	    	retrievedWordQueue.put(w5);
+	    	
+	    	// putting 2 poison pills
+	    	retrievedWordQueue.put(new Word("", new File("/dev/null")));
+	    	retrievedWordQueue.put(new Word("", new File("/dev/null")));
+	    	
+		} catch (InterruptedException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+    	
+    	// Index
+        ConcurrentHashMap<String, CopyOnWriteArrayList<File>> index = new ConcurrentHashMap<String, CopyOnWriteArrayList<File>>();
+      
+		// starting indexers
+		for (int i = 0; i < indexers.length ; i++) {
+			indexers[i] = new Indexer(retrievedWordQueue, index, null);
+			indexers[i].start();
+		}
+		Verify.endAtomic();
+				
+		// wait for indexer to terminate their job
+		for (int i = 0; i < indexers.length; i++) {
+			try {
+				indexers[i].join();
+			} catch (InterruptedException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+		}
+		
+		// check that the index built doesn't contain duplicate values and that values are as expected
+		if (index.size() > 0) {
+			for (ConcurrentHashMap.Entry<String, CopyOnWriteArrayList<File>> entry : index.entrySet()) {
+				  String key = (String)entry.getKey();
+				  CopyOnWriteArrayList<File> value = entry.getValue();
+				  Verify.assertTrue(!containsDuplicates(value));
+			}
+			
+			Verify.assertTrue(index.get("chocolate").size() == 2);
+			Verify.assertTrue(index.get("bacon").size() == 1);
+			Verify.assertTrue(index.get("muffin").size() == 1);
+			
+		}
+
+    }
+    
+    public static <T> boolean containsDuplicates(T... elements) {
+        final Set<T> set = new HashSet<T>();
+        Collections.addAll(set, elements);
+        return set.size() < elements.length;
+    }
+    
+}
